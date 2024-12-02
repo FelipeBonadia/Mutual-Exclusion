@@ -19,7 +19,7 @@ Digite {UNDERLINE}sair{R} para encerrar o processo"""
 AUTOMATIC_TEST = f"{GREEN}Inicializando teste automático...{R}"
 DEBUG_MESSAGE_TYPE = "\n{}DEBUG: Mensagem do tipo {} enviada para {}.{}"
 DEBUG_FILA = (
-    "{}DEBUG: {} adionado à fila de espera para {}\n[recurso_ocupado = {}, {} > {}]{}"
+    "{}DEBUG: {} adicionado à fila de espera para {}\n[recurso_ocupado = {}, {} > {}]{}"
 )
 
 
@@ -48,12 +48,10 @@ esperando_recurso = None
 lock = threading.Lock()
 cond_fila = threading.Condition(lock)
 
-
 # Função de atualização de relógio
 def atualizar_relogio(timestamp_recebido):
     global relogio_local
     relogio_local = max(relogio_local, int(timestamp_recebido)) + 1
-
 
 # Função para envio de mensagens
 def enviar_mensagem(destino: str, mensagem):
@@ -66,7 +64,6 @@ def enviar_mensagem(destino: str, mensagem):
                 print(DEBUG_MESSAGE_TYPE.format(YELLOW, mensagem["tipo"], destino, R))
     except Exception as e:
         print(f"Erro ao enviar mensagem para {destino}: {e}")
-
 
 # Multicast para requisitar acesso ao recurso
 def multicast_requisicao(recurso: str):
@@ -83,7 +80,6 @@ def multicast_requisicao(recurso: str):
         if destino != ID_PROCESSO:
             enviar_mensagem(destino, mensagem)
 
-
 # Enviar resposta (ACK) para requisições recebidas
 def enviar_ack(destino, recurso):
     global relogio_local
@@ -95,7 +91,6 @@ def enviar_ack(destino, recurso):
         "id": ID_PROCESSO,
     }
     enviar_mensagem(destino, mensagem)
-
 
 # Enviar resposta (NACK) para requisições recebidas
 def enviar_nack(destino, recurso):
@@ -109,6 +104,13 @@ def enviar_nack(destino, recurso):
     }
     enviar_mensagem(destino, mensagem)
 
+# Função para o processo de aguardar liberação do recurso
+def aguardar_recurso(recurso):
+    global recurso_ocupado, esperando_recurso
+    while recurso_ocupado:
+        time.sleep(0.1)  # Verifica periodicamente
+    print(f"Recurso {recurso} foi liberado.")
+    entrar_recurso_critico(recurso)
 
 # Entrar no recurso crítico
 def entrar_recurso_critico(recurso: str):
@@ -121,10 +123,8 @@ def entrar_recurso_critico(recurso: str):
         escolha = input("> ").strip()
         if escolha == "1":
             print(f"Aguardando liberação do recurso {recurso}...")
-            while recurso_ocupado:
-                time.sleep(0.1)
-            print(f"Recurso {recurso} foi liberado.")
-            entrar_recurso_critico(recurso)  # Reentra quando o recurso for liberado
+            # Cria uma thread para verificar a liberação do recurso sem travar o terminal
+            threading.Thread(target=aguardar_recurso, args=(recurso,), daemon=True).start()
         else:
             print(f"Você optou por desistir do recurso {recurso}.")
         return
@@ -139,7 +139,6 @@ def entrar_recurso_critico(recurso: str):
     recurso_ocupado = True
     print(f"Acesso concedido ao {recurso}! \n")
 
-
 # Sair do recurso crítico
 def sair_recurso_critico(recurso):
     global recurso_ocupado, esperando_recurso, fila_recurso
@@ -148,14 +147,14 @@ def sair_recurso_critico(recurso):
         recurso_ocupado = False
         esperando_recurso = None
         print(f"Recurso {recurso} liberado.")
-        recurso_ocupado = False
-        # cond.notify_all()  # Notifica processos na fila
 
-        # Responde para processos na fila
-        while fila_recurso:
-            requisicao = fila_recurso.pop(0)
+        # Notifica o próximo processo na fila
+        if fila_recurso:
+            requisicao = fila_recurso.pop(0)  # Retira o primeiro processo da fila
             enviar_ack(requisicao["id"], recurso)
-
+            print(f"Processo {requisicao['id']} recebeu o recurso {recurso}.")
+        # Reset fila após processar
+        fila_recurso.clear()
 
 # Processar mensagens recebidas
 def processar_mensagem(mensagem):
@@ -201,14 +200,10 @@ def processar_mensagem(mensagem):
         escolha = input("> ").strip()
         if escolha == "1":
             print(f"Aguardando liberação do recurso {recurso}...")
-            while recurso_ocupado:
-                time.sleep(0.1)
-            print(f"Recurso {recurso} foi liberado.")
-            entrar_recurso_critico(recurso)  # Reentra quando o recurso for liberado
+            threading.Thread(target=aguardar_recurso, args=(recurso,), daemon=True).start()
         else:
             print(f"Você optou por desistir do recurso {recurso}.")
         return
-
 
 # Thread para receber conexões
 def servidor():
@@ -222,7 +217,6 @@ def servidor():
             if data:
                 mensagem = json.loads(data.decode())
                 processar_mensagem(mensagem)
-
 
 # Interface para comandos do usuário
 def interface_usuario():
@@ -239,7 +233,7 @@ def interface_usuario():
             print(f"Encerrando {ID_PROCESSO}...")
             break
 
-
+# Teste automático
 def teste_automatico():
     global teste_ativo
     teste_ativo = True
