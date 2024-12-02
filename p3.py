@@ -35,6 +35,7 @@ PROCESSOS = {
 
 # Modo de debug
 debug_mode = True
+teste_ativo = False
 
 # Estado local
 recurso_ocupado = False
@@ -96,6 +97,19 @@ def enviar_ack(destino, recurso):
     enviar_mensagem(destino, mensagem)
 
 
+# Enviar resposta (NACK) para requisições recebidas
+def enviar_nack(destino, recurso):
+    global relogio_local
+    relogio_local += 1
+    mensagem = {
+        "tipo": "nack",
+        "recurso": recurso,
+        "timestamp": relogio_local,
+        "id": ID_PROCESSO,
+    }
+    enviar_mensagem(destino, mensagem)
+
+
 # Entrar no recurso crítico
 def entrar_recurso_critico(recurso: str):
     global recurso_ocupado, esperando_recurso
@@ -109,13 +123,16 @@ def entrar_recurso_critico(recurso: str):
             print(f"Aguardando liberação do recurso {recurso}...")
             while recurso_ocupado:
                 time.sleep(0.1)
-            entrar_recurso_critico(recurso)
+            print(f"Recurso {recurso} foi liberado.")
+            entrar_recurso_critico(recurso)  # Reentra quando o recurso for liberado
         else:
             print(f"Você optou por desistir do recurso {recurso}.")
         return
 
     print(f"Requisitando acesso ao {recurso}...")
     esperando_recurso = recurso
+    if teste_ativo:
+        time.sleep(2)  # Simula atraso na requisição
     multicast_requisicao(recurso)
     while respostas_esperadas[recurso]:
         time.sleep(0.1)  # Aguarda receber todos os ACKs
@@ -169,11 +186,28 @@ def processar_mensagem(mensagem):
                         R,
                     )
                 )
+            # Enviar NACK se o recurso está ocupado
+            enviar_nack(remetente, recurso)
         else:
             enviar_ack(remetente, recurso)
     elif tipo == "ack":
         if recurso in respostas_esperadas:
             respostas_esperadas[recurso].discard(remetente)
+    elif tipo == "nack":
+        print(f"Recurso {recurso} ocupado. Processando NACK de {remetente}.")
+        print("O que deseja fazer?")
+        print("1. Esperar o recurso ser liberado")
+        print("2. Desistir da tentativa")
+        escolha = input("> ").strip()
+        if escolha == "1":
+            print(f"Aguardando liberação do recurso {recurso}...")
+            while recurso_ocupado:
+                time.sleep(0.1)
+            print(f"Recurso {recurso} foi liberado.")
+            entrar_recurso_critico(recurso)  # Reentra quando o recurso for liberado
+        else:
+            print(f"Você optou por desistir do recurso {recurso}.")
+        return
 
 
 # Thread para receber conexões
@@ -207,7 +241,10 @@ def interface_usuario():
 
 
 def teste_automatico():
-    time.sleep(2)  # Espera para sincronizar a execução com o processo 1
+    global teste_ativo
+    teste_ativo = True
+
+    time.sleep(2)  # Espera para sincronizar a execução com o processo 3
     print("\n" + AUTOMATIC_TEST)
     entrar_recurso_critico("r1")
     time.sleep(3)  # Simula o uso do recurso
