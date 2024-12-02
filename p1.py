@@ -225,6 +225,6 @@ if __name__ == "__main__":
     threading.Thread(target=servidor, daemon=True).start()
 
     # Executa o teste automático
-    threading.Thread(target=teste_automatico).start()
+    # threading.Thread(target=teste_automatico).start()
 
     interface_usuario()
