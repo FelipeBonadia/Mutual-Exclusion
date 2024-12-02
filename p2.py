@@ -1,17 +1,40 @@
+import json
 import socket
 import threading
-import json
 import time
+
+# Cores para mensagens do terminal
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+BLUE = "\033[34m"
+UNDERLINE = "\033[4m"
+R = "\033[0m"  # Reset
+
+# Mensagens constantes
+QUESTION = f"""
+Digite {UNDERLINE}solicitar <nome do recurso>{R} para solicitar acesso a um recurso.
+Digite {UNDERLINE}liberar <nome do recurso>{R} para liberar um recurso.
+Digite {UNDERLINE}sair{R} para encerrar o processo"""
+AUTOMATIC_TEST = f"{GREEN}Inicializando teste automático...{R}"
+DEBUG_MESSAGE_TYPE = "\n{}DEBUG: Mensagem do tipo {} enviada para {}.{}"
+DEBUG_FILA = (
+    "{}DEBUG: {} adionado à fila de espera para {}\n[recurso_ocupado = {}, {} > {}]{}"
+)
+
 
 # Configurações
 HOST = "localhost"
-PORT = 8003  # Mude para 8002 e 8003 nos outros arquivos
-ID_PROCESSO = "processo3"  # Mude para processo2 e processo3
+PORT = 8002  # Mude para 8002 e 8003 nos outros arquivos
+ID_PROCESSO = "p2"  # Mude para p1 e p3
 PROCESSOS = {
-    "processo1": ("localhost", 8001),
-    "processo2": ("localhost", 8002),
-    "processo3": ("localhost", 8003),
+    "p1": ("localhost", 8001),
+    "p2": ("localhost", 8002),
+    "p3": ("localhost", 8003),
 }
+
+# Modo de debug
+debug_mode = True
 
 # Estado local
 recurso_ocupado = False
@@ -20,23 +43,32 @@ respostas_esperadas = {}  # {"recurso": set(de processos aguardando resposta)}
 relogio_local = 0
 esperando_recurso = None
 
+# Gerenciamento de threads
+lock = threading.Lock()
+cond_fila = threading.Condition(lock)
+
+
 # Função de atualização de relógio
 def atualizar_relogio(timestamp_recebido):
     global relogio_local
-    relogio_local = max(relogio_local, timestamp_recebido) + 1
+    relogio_local = max(relogio_local, int(timestamp_recebido)) + 1
+
 
 # Função para envio de mensagens
-def enviar_mensagem(destino, mensagem):
+def enviar_mensagem(destino: str, mensagem):
     host, port = PROCESSOS[destino]
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.connect((host, port))
             s.sendall(json.dumps(mensagem).encode())
+            if debug_mode:
+                print(DEBUG_MESSAGE_TYPE.format(YELLOW, mensagem["tipo"], destino, R))
     except Exception as e:
         print(f"Erro ao enviar mensagem para {destino}: {e}")
 
+
 # Multicast para requisitar acesso ao recurso
-def multicast_requisicao(recurso):
+def multicast_requisicao(recurso: str):
     global relogio_local, respostas_esperadas
     relogio_local += 1
     mensagem = {
@@ -50,6 +82,7 @@ def multicast_requisicao(recurso):
         if destino != ID_PROCESSO:
             enviar_mensagem(destino, mensagem)
 
+
 # Enviar resposta (ACK) para requisições recebidas
 def enviar_ack(destino, recurso):
     global relogio_local
@@ -62,9 +95,11 @@ def enviar_ack(destino, recurso):
     }
     enviar_mensagem(destino, mensagem)
 
+
 # Entrar no recurso crítico
-def entrar_recurso_critico(recurso):
+def entrar_recurso_critico(recurso: str):
     global recurso_ocupado, esperando_recurso
+
     if recurso_ocupado:
         print(f"Recurso {recurso} já está ocupado. O que deseja fazer?")
         print("1. Esperar o recurso ser liberado")
@@ -85,19 +120,25 @@ def entrar_recurso_critico(recurso):
     while respostas_esperadas[recurso]:
         time.sleep(0.1)  # Aguarda receber todos os ACKs
     recurso_ocupado = True
-    print(f"Acesso concedido ao {recurso}!")
+    print(f"Acesso concedido ao {recurso}! \n")
+
 
 # Sair do recurso crítico
 def sair_recurso_critico(recurso):
     global recurso_ocupado, esperando_recurso, fila_recurso
+
     if recurso_ocupado and esperando_recurso == recurso:
         recurso_ocupado = False
         esperando_recurso = None
         print(f"Recurso {recurso} liberado.")
+        recurso_ocupado = False
+        # cond.notify_all()  # Notifica processos na fila
+
         # Responde para processos na fila
         while fila_recurso:
             requisicao = fila_recurso.pop(0)
             enviar_ack(requisicao["id"], recurso)
+
 
 # Processar mensagens recebidas
 def processar_mensagem(mensagem):
@@ -116,11 +157,24 @@ def processar_mensagem(mensagem):
             and (relogio_local, ID_PROCESSO) > (timestamp, remetente)
         ):
             fila_recurso.append(mensagem)
+            if debug_mode:
+                print(
+                    DEBUG_FILA.format(
+                        YELLOW,
+                        remetente,
+                        recurso,
+                        recurso_ocupado,
+                        (relogio_local, ID_PROCESSO),
+                        (timestamp, remetente),
+                        R,
+                    )
+                )
         else:
             enviar_ack(remetente, recurso)
     elif tipo == "ack":
         if recurso in respostas_esperadas:
             respostas_esperadas[recurso].discard(remetente)
+
 
 # Thread para receber conexões
 def servidor():
@@ -135,10 +189,11 @@ def servidor():
                 mensagem = json.loads(data.decode())
                 processar_mensagem(mensagem)
 
+
 # Interface para comandos do usuário
 def interface_usuario():
     while True:
-        print("digite solicitar <nome do curso> para seleciona-lo, digite liberar <nome do recurso> para libera-lo, ou digite sair ")
+        print(QUESTION.strip())
         comando = input("> ").strip()
         if comando.startswith("solicitar"):
             _, recurso = comando.split()
@@ -149,6 +204,7 @@ def interface_usuario():
         elif comando == "sair":
             print(f"Encerrando {ID_PROCESSO}...")
             break
+
 
 # Inicialização
 if __name__ == "__main__":
